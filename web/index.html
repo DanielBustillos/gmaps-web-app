@@ -377,59 +377,7 @@
                         this.logMessage('   • Intenta con un radio menor');
                         this.logMessage('   • Usa palabras clave más específicas');
                     }
-                    
-                    // Fallback a simulación para mostrar cómo funcionaría
-                    this.logMessage('');
-                    this.logMessage('🎭 Mostrando ejemplo de cómo se verían los resultados...');
-                    await this.delay(2000);
-                    await this.simulateProgress(formData);
                 }
-            }
-            
-            async simulateProgress(formData) {
-                // Paso 1: Scraping principal
-                this.logMessage('📊 Paso 1: Ejecutando scraper principal...');
-                await this.delay(2000);
-                this.logMessage('   ✓ Navegando a Google Maps...');
-                await this.delay(1500);
-                this.logMessage('   ✓ Buscando lugares...');
-                await this.delay(3000);
-                
-                const placesCount = Math.floor(Math.random() * 100) + 50;
-                this.logMessage(`   ✓ ${placesCount} lugares encontrados`);
-                await this.delay(1000);
-                
-                const timestamp = new Date().toISOString().slice(0,19).replace(/:/g, '-').replace('T', '_');
-                this.currentFileName = `prospects_${formData.keyword.replace(/\s+/g, '_')}_${formData.radius}km_${timestamp}.csv`;
-                
-                this.logMessage(`   ✓ Datos guardados en: ${this.currentFileName}`);
-                await this.delay(1500);
-                
-                if (formData.includePhone) {
-                    // Paso 2: Extracción de teléfonos
-                    this.logMessage('');
-                    this.logMessage('📞 Paso 2: Extrayendo números de teléfono...');
-                    await this.delay(1500);
-                    
-                    const phonesFound = Math.floor(placesCount * 0.7);
-                    for (let i = 0; i < 5; i++) {
-                        const processed = Math.floor((i + 1) * placesCount / 5);
-                        this.logMessage(`   🔄 Procesados: ${processed}/${placesCount}`);
-                        await this.delay(2000);
-                    }
-                    
-                    this.logMessage(`   ✓ ${phonesFound} teléfonos extraídos`);
-                    this.currentFileName = this.currentFileName.replace('.csv', '_with_phones.csv');
-                    await this.delay(1000);
-                }
-                
-                // Finalización
-                this.logMessage('');
-                this.logMessage('✅ Pipeline completado exitosamente!');
-                this.logMessage(`📂 Archivo final: ${this.currentFileName}`);
-                
-                await this.delay(1000);
-                this.showResults(formData, placesCount);
             }
             
             showResults(formData, placesCount, phonesFound = 0) {
@@ -509,50 +457,11 @@
                         })
                         .catch((error) => {
                             console.error('Download failed:', error);
-                            this.logMessage('⚠️ No se pudo descargar del servidor, generando datos de ejemplo...');
-                            // Fallback a CSV de ejemplo
-                            this.downloadSampleCSV();
+                            this.logError('⚠️ No se pudo descargar el archivo desde el servidor.');
                         });
                 } else {
-                    this.logMessage('⚠️ No hay nombre de archivo, generando datos de ejemplo...');
-                    this.downloadSampleCSV();
+                    this.logError('⚠️ No hay nombre de archivo para descargar.');
                 }
-            }
-            
-            downloadSampleCSV() {
-                // Crear un CSV de ejemplo como fallback
-                const csvContent = this.generateSampleCSV();
-                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-                const link = document.createElement('a');
-                
-                if (link.download !== undefined) {
-                    const url = URL.createObjectURL(blob);
-                    link.setAttribute('href', url);
-                    link.setAttribute('download', this.currentFileName || 'sample_data.csv');
-                    link.style.visibility = 'hidden';
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                    
-                    this.logMessage('📥 Descarga automática iniciada (datos de ejemplo)...');
-                }
-            }
-            
-            generateSampleCSV() {
-                const headers = ['Name', 'Address', 'Stars', 'Reviews', 'Phone', 'Hours', 'Website', 'GoogleURL', 'ScrapedPhone'];
-                let csvContent = headers.join(',') + '\n';
-                
-                const sampleData = [
-                    ['Spa Relax Center', '123 Main St, Ciudad', '4.5', '85', '555-0123', '9:00-18:00', 'https://example.com', 'https://maps.google.com/1', '221 248 0885'],
-                    ['Wellness Spa', '456 Oak Ave, Ciudad', '4.8', '124', '555-0456', '8:00-20:00', 'https://wellness.com', 'https://maps.google.com/2', '221 345 6789'],
-                    ['Beauty Center', '789 Pine St, Ciudad', '4.2', '67', '555-0789', '10:00-19:00', 'https://beauty.com', 'https://maps.google.com/3', '221 987 6543']
-                ];
-                
-                sampleData.forEach(row => {
-                    csvContent += row.map(field => `"${field}"`).join(',') + '\n';
-                });
-                
-                return csvContent;
             }
             
             downloadFile() {
@@ -561,8 +470,7 @@
                     window.location.href = `/api/download/${this.currentFileName}`;
                     this.logMessage('📥 Descarga iniciada desde servidor...');
                 } else {
-                    // Fallback a descarga simulada
-                    this.downloadSampleCSV();
+                    this.logError('⚠️ No hay archivo disponible para descargar.');
                 }
             }
             

@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: mapsscrap
+    name: gmaps-web-app
     env: static
     buildCommand: "go build -o web_server web_server.go"
     startCommand: "./web_server"
