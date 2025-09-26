@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: mapsscrap
+    env: static
+    buildCommand: "go build -o web_server web_server.go"
+    startCommand: "./web_server"
+    envVars:
+      - key: PORT
+        value: "8080"
