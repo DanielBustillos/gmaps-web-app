@@ -1,11 +1,11 @@
 <!DOCTYPE html>
 <html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Maps Scraper - Pipeline Web Interface</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Maps Scraper - Pipeline Web Interface</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <style>
         .spinner {
             border: 3px solid #374151;
             border-top: 3px solid #3b82f6;
@@ -52,10 +52,10 @@
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
         }
-    </style>
-</head>
-<body class="bg-gradient-to-br from-gray-50 to-gray-100 min-h-screen">
-    <div class="container mx-auto px-4 py-8 max-w-6xl">
+        </style>
+    </head>
+    <body class="bg-gradient-to-br from-gray-50 to-gray-100 min-h-screen">
+        <div class="container mx-auto px-4 py-8 max-w-6xl">
         <!-- Header -->
         <div class="text-center mb-12">
             <div class="flex items-center justify-center mb-4">
@@ -236,9 +236,9 @@
         </div>
     </div>
 
-    <script>
-        class PipelineInterface {
-            constructor() {
+        <script>
+            class PipelineInterface {
+                constructor() {
                 this.form = document.getElementById('scraperForm');
                 this.terminal = document.getElementById('terminal');
                 this.terminalContent = document.getElementById('terminalContent');
@@ -249,11 +249,11 @@
                 this.downloadBtn = document.getElementById('downloadBtn');
                 this.downloadInfo = document.getElementById('downloadInfo');
                 this.newSearchBtn = document.getElementById('newSearchBtn');
-                
+
                 this.currentFileName = '';
                 this.isRunning = false;
                 this.progressInterval = null;
-                
+
                 this.bindEvents();
             }
             
@@ -262,7 +262,7 @@
                 this.downloadBtn.addEventListener('click', () => this.downloadFile());
                 this.newSearchBtn.addEventListener('click', () => this.resetInterface());
             }
-            
+
             async handleSubmit(e) {
                 e.preventDefault();
                 
@@ -578,7 +578,8 @@
         }
         
         // Inicializar la aplicación
-        document.addEventListener('DOMContentLoaded', () => {
+        // Esperar a 'load' para asegurar que Mapbox GL haya cargado
+        window.addEventListener('load', () => {
             new PipelineInterface();
         });
     </script>
