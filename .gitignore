@@ -1,0 +1,27 @@
+# Binaries
+mapsscrap-1
+web_server
+
+# macOS
+.DS_Store
+
+# Go
+/bin/
+/pkg/
+
+# Logs
+*.log
+
+# Node / frontend
+node_modules/
+
+# Docker
+docker-compose.override.yml
+
+# Env files
+.env
+
+# IDE
+.vscode/
+.idea/
+**/*.iml

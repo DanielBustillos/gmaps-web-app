@@ -49,13 +49,23 @@ log "📏 Radio: ${RADIUS}km"
 # NOTE: Google Chrome debe estar instalado durante el proceso de build (p. ej. en Render).
 # No instalamos Chrome en cada ejecución del pipeline para ahorrar tiempo y evitar
 # realizar tareas que deben hacerse en el build/deploy.
-if ! which google-chrome > /dev/null 2>&1; then
-        error "Google Chrome no encontrado en el entorno. Debe instalarse durante el build/deploy."
-        error "Añade la instalación de Chrome al Build Command (p. ej. en render.yaml)."
-        exit 1
+CHROME_BIN=""
+if command -v google-chrome >/dev/null 2>&1; then
+    CHROME_BIN=$(command -v google-chrome)
+elif command -v google-chrome-stable >/dev/null 2>&1; then
+    CHROME_BIN=$(command -v google-chrome-stable)
+elif [ -x "/usr/bin/google-chrome" ]; then
+    CHROME_BIN="/usr/bin/google-chrome"
 fi
 
-success "✅ Google Chrome disponible"
+if [ -z "$CHROME_BIN" ]; then
+    error "Google Chrome no encontrado en el entorno. Debe instalarse durante el build/deploy."
+    error "Añade la instalación de Chrome al Build Command (p. ej. en render.yaml) o use una imagen Docker que incluya Chrome."
+    exit 1
+else
+    success "✅ Google Chrome disponible en: $CHROME_BIN"
+    log "🔎 Usando navegador: $CHROME_BIN"
+fi
 
 # Verificar que mapsscrap-1 existe
 if [ ! -f "./mapsscrap-1" ]; then

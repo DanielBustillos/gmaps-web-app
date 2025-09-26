@@ -1,0 +1,17 @@
+# Ignore git files
+.git
+.gitignore
+
+# Node
+node_modules
+
+# Local binaries
+mapsscrap-1
+web_server
+
+# Logs
+*.log
+
+# Ignore deployment artifacts
+*.tgz
+*.zip
