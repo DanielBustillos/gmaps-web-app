@@ -46,9 +46,7 @@ log "📍 Coordenadas: $LAT, $LON"
 log "🔍 Consulta: $QUERY"
 log "📏 Radio: ${RADIUS}km"
 
-# NOTE: Google Chrome debe estar instalado durante el proceso de build (p. ej. en Render).
-# No instalamos Chrome en cada ejecución del pipeline para ahorrar tiempo y evitar
-# realizar tareas que deben hacerse en el build/deploy.
+# Verificar Google Chrome
 CHROME_BIN=""
 if command -v google-chrome >/dev/null 2>&1; then
     CHROME_BIN=$(command -v google-chrome)
@@ -59,9 +57,17 @@ elif [ -x "/usr/bin/google-chrome" ]; then
 fi
 
 if [ -z "$CHROME_BIN" ]; then
-    error "Google Chrome no encontrado en el entorno. Debe instalarse durante el build/deploy."
-    error "Añade la instalación de Chrome al Build Command (p. ej. en render.yaml) o use una imagen Docker que incluya Chrome."
-    exit 1
+    log "Google Chrome noo encontrado, intentando instalar..."
+    wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -O /tmp/google-chrome.deb
+    sudo apt-get update && sudo apt-get install -y /tmp/google-chrome.deb
+    if command -v google-chrome >/dev/null 2>&1; then
+       CHROME_BIN=$(command -v google-chrome)
+       success "✅ Google Chrome instalado en: $CHROME_BIN"
+       log "🔎 Usando navegador: $CHROME_BIN"
+    else
+       error "Error al instalar Google Chrome"
+       exit 1
+    fi
 else
     success "✅ Google Chrome disponible en: $CHROME_BIN"
     log "🔎 Usando navegador: $CHROME_BIN"
