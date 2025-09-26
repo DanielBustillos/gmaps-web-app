@@ -52,6 +52,17 @@ if [ ! -f "./mapsscrap-1" ]; then
     exit 1
 fi
 
+# Verificar permisos de ejecución para mapsscrap-1
+chmod +x ./mapsscrap-1
+
+# Verificar que Google Chrome está instalado
+if ! which google-chrome > /dev/null 2>&1; then
+  error "❌ Google Chrome no está instalado o no está en el PATH"
+  exit 1
+fi
+
+success "✅ Google Chrome está instalado y listo para usar"
+
 # Paso 1: Ejecutar mapsscrap-1 para obtener lugares
 log "📊 Paso 1: Ejecutando mapsscrap-1 para obtener lugares..."
 ./mapsscrap-1 --lat "$LAT" --lon "$LON" --query "$QUERY" --radius "$RADIUS"

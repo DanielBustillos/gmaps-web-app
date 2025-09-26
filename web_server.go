@@ -218,6 +218,11 @@ func executePipeline(req PipelineRequest) PipelineResponse {
 		for scanner.Scan() {
 			line := scanner.Text()
 			log.Printf("📤 STDOUT: %s", line)
+
+			// Agregar log detallado para errores
+			if err != nil {
+				log.Printf("❌ Error procesando línea: %v", err)
+			}
 			
 			// Detectar barra de progreso del scraper principal
 			if matches := progressRegex.FindStringSubmatch(line); len(matches) > 0 {

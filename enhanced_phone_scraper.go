@@ -42,16 +42,16 @@ type PlaceWithPhone struct {
 
 // NewPhoneScraper crea una nueva instancia del scraper de teléfonos
 func NewPhoneScraper() (*PhoneScraper, error) {
-	launch := launcher.New().
-		Headless(true).
-		Devtools(false)
-
-	url, err := launch.Launch()
-	if err != nil {
-		return nil, fmt.Errorf("failed to launch browser: %w", err)
+	// Configurar el navegador para usar Google Chrome preinstalado
+	chromePath := "/usr/bin/google-chrome"
+	log.Printf("Verificando la existencia de Google Chrome en: %s", chromePath)
+	if _, err := os.Stat(chromePath); os.IsNotExist(err) {
+		log.Printf("❌ Google Chrome no encontrado en %s", chromePath)
+		return nil, fmt.Errorf("Google Chrome no está instalado en el entorno")
 	}
 
-	browser := rod.New().ControlURL(url).MustConnect()
+	log.Printf("✅ Google Chrome encontrado en %s", chromePath)
+	browser := rod.New().ControlURL(launcher.New().Bin(chromePath).MustLaunch()).MustConnect()
 	
 	return &PhoneScraper{
 		browser: browser,
