@@ -2,9 +2,16 @@ services:
   - type: web
     name: gmaps-web-app
     env: docker
+    branch: main
     region: oregon
     plan: free
     dockerfilePath: Dockerfile
+    autoDeploy: true
+    # Health check path Render will hit to verify the service is up
+    healthCheckPath: "/"
+    # Disable PR previews to avoid accidental deploys on forks/PRs
+    pullRequestPreviews:
+      enabled: false
     envVars:
       - key: PORT
         value: "8080"
