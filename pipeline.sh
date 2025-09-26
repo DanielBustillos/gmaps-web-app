@@ -47,6 +47,8 @@ log "🔍 Consulta: $QUERY"
 log "📏 Radio: ${RADIUS}km"
 
 # Verificar Google Chrome
+# NOTE: Google Chrome debe estar instalado durante el proceso de build/deploy.
+# No instalamos Chrome en cada ejecución del pipeline para ahorrar tiempo y evitar tareas que deben hacerse en el build/deploy.
 CHROME_BIN=""
 if command -v google-chrome >/dev/null 2>&1; then
     CHROME_BIN=$(command -v google-chrome)
@@ -57,9 +59,9 @@ elif [ -x "/usr/bin/google-chrome" ]; then
 fi
 
 if [ -z "$CHROME_BIN" ]; then
-    log "Google Chrome noo encontrado, intentando instalar..."
-    wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -O /tmp/google-chrome.deb
-    sudo apt-get update && sudo apt-get install -y /tmp/google-chrome.deb
+    log "Google Chrome no encontrado, intentando instalar..."
+    wget https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm -O /tmp/google-chrome.rpm
+    sudo yum update -y && sudo yum localinstall -y /tmp/google-chrome.rpm
     if command -v google-chrome >/dev/null 2>&1; then
        CHROME_BIN=$(command -v google-chrome)
        success "✅ Google Chrome instalado en: $CHROME_BIN"
