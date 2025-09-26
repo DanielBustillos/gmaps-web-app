@@ -46,6 +46,17 @@ log "📍 Coordenadas: $LAT, $LON"
 log "🔍 Consulta: $QUERY"
 log "📏 Radio: ${RADIUS}km"
 
+# NOTE: Google Chrome debe estar instalado durante el proceso de build (p. ej. en Render).
+# No instalamos Chrome en cada ejecución del pipeline para ahorrar tiempo y evitar
+# realizar tareas que deben hacerse en el build/deploy.
+if ! which google-chrome > /dev/null 2>&1; then
+        error "Google Chrome no encontrado en el entorno. Debe instalarse durante el build/deploy."
+        error "Añade la instalación de Chrome al Build Command (p. ej. en render.yaml)."
+        exit 1
+fi
+
+success "✅ Google Chrome disponible"
+
 # Verificar que mapsscrap-1 existe
 if [ ! -f "./mapsscrap-1" ]; then
     error "El ejecutable mapsscrap-1 no existe. Ejecuta 'make build-all' primero."
@@ -54,14 +65,6 @@ fi
 
 # Verificar permisos de ejecución para mapsscrap-1
 chmod +x ./mapsscrap-1
-
-# Verificar que Google Chrome está instalado
-if ! which google-chrome > /dev/null 2>&1; then
-  error "❌ Google Chrome no está instalado o no está en el PATH"
-  exit 1
-fi
-
-success "✅ Google Chrome está instalado y listo para usar"
 
 # Paso 1: Ejecutar mapsscrap-1 para obtener lugares
 log "📊 Paso 1: Ejecutando mapsscrap-1 para obtener lugares..."

@@ -1,9 +1,19 @@
 services:
   - type: web
     name: gmaps-web-app
-    env: static
-    buildCommand: "go build -o web_server web_server.go"
-    startCommand: "./web_server"
+    env: docker
+    region: oregon
+    plan: free
+    buildCommand: |
+      set -e
+      apt-get update && apt-get install -y wget gnupg ca-certificates sudo
+      wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+      apt-get install -y ./google-chrome-stable_current_amd64.deb
+      rm google-chrome-stable_current_amd64.deb
+      go mod tidy
+      GOOS=linux GOARCH=amd64 go build -o mapsscrap-1 main.go
+      GOOS=linux GOARCH=amd64 go build -o web_server web_server.go
+    startCommand: ./web_server
     envVars:
       - key: PORT
         value: "8080"
