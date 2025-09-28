@@ -32,9 +32,10 @@ warning() {
 # Validar argumentos
 if [ $# -ne 4 ]; then
     error "Uso: $0 <latitud> <longitud> <consulta> <radio_km>"
-    error "Ejemplo: $0 19.1019061 -98.2810447 \"spa\" 2.0"
+    error "Ejemplo: $0 119.031492 -98.2327179 \"spa\" 2.0" 
     exit 1
 fi
+
 
 LAT=$1
 LON=$2
@@ -56,19 +57,35 @@ elif command -v google-chrome-stable >/dev/null 2>&1; then
     CHROME_BIN=$(command -v google-chrome-stable)
 elif [ -x "/usr/bin/google-chrome" ]; then
     CHROME_BIN="/usr/bin/google-chrome"
+elif command -v chromium >/dev/null 2>&1; then
+    CHROME_BIN=$(command -v chromium)
+elif command -v chromium-browser >/dev/null 2>&1; then
+    CHROME_BIN=$(command -v chromium-browser)
 fi
 
 if [ -z "$CHROME_BIN" ]; then
-    log "Google Chrome no encontrado, intentando instalar..."
-    wget https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm -O /tmp/google-chrome.rpm
-    sudo yum update -y && sudo yum localinstall -y /tmp/google-chrome.rpm
-    if command -v google-chrome >/dev/null 2>&1; then
-       CHROME_BIN=$(command -v google-chrome)
-       success "✅ Google Chrome instalado en: $CHROME_BIN"
-       log "🔎 Usando navegador: $CHROME_BIN"
+    log "Google Chrome no encontrado."
+    # Intentar instalar sólo si estamos ejecutando como root (no usar sudo dentro de contenedor)
+    if [ "$(id -u)" -eq 0 ]; then
+        log "Intentando instalar Google Chrome (ejecutando como root)..."
+        wget https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm -O /tmp/google-chrome.rpm
+        yum update -y && yum localinstall -y /tmp/google-chrome.rpm
+        rm -f /tmp/google-chrome.rpm
+        if command -v google-chrome >/dev/null 2>&1 || command -v google-chrome-stable >/dev/null 2>&1; then
+           if command -v google-chrome >/dev/null 2>&1; then
+               CHROME_BIN=$(command -v google-chrome)
+           else
+               CHROME_BIN=$(command -v google-chrome-stable)
+           fi
+           success "✅ Google Chrome instalado en: $CHROME_BIN"
+           log "🔎 Usando navegador: $CHROME_BIN"
+        else
+           error "Error al instalar Google Chrome"
+           exit 1
+        fi
     else
-       error "Error al instalar Google Chrome"
-       exit 1
+        error "Google Chrome no encontrado y no se puede instalar porque el script no corre como root. Instala Chrome durante el build o ejecuta este script como root."
+        exit 1
     fi
 else
     success "✅ Google Chrome disponible en: $CHROME_BIN"

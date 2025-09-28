@@ -18,8 +18,10 @@ import (
 )
 
 const (
-	maxPhoneWorkers = 3 // Número máximo de workers concurrentes para teléfonos
-	phoneTimeout    = 30 * time.Second
+	// Aumenté los workers para paralelizar más (ajusta según recursos disponibles)
+	maxPhoneWorkers = 8 // Número máximo de workers concurrentes para teléfonos
+	// Reducir timeout por lugar para evitar esperar demasiado en lugares problemáticos
+	phoneTimeout = 15 * time.Second
 )
 
 // PhoneScraper estructura para el scraper de teléfonos de Google Maps
@@ -294,15 +296,14 @@ func readCSV(csvPath string) ([]PlaceWithPhone, error) {
 
 // processPlacesWithPhones procesa los lugares para extraer teléfonos usando workers
 func processPlacesWithPhones(scraper *PhoneScraper, places []PlaceWithPhone) []PlaceWithPhone {
-	var wg sync.WaitGroup
 	var mu sync.Mutex
 	updatedPlaces := make([]PlaceWithPhone, len(places))
 	copy(updatedPlaces, places)
 
-	// Crear canal para limitar workers concurrentes
-	semaphore := make(chan struct{}, maxPhoneWorkers)
-	
-	// Crear barra de progreso visual
+	// Canal de trabajos
+	jobs := make(chan int, len(places))
+
+	// Barra de progreso
 	bar := progressbar.NewOptions(len(places),
 		progressbar.OptionEnableColorCodes(true),
 		progressbar.OptionSetDescription("[cyan]🔍 Extrayendo teléfonos...[reset]"),
@@ -319,41 +320,70 @@ func processPlacesWithPhones(scraper *PhoneScraper, places []PlaceWithPhone) []P
 		progressbar.OptionFullWidth(),
 	)
 
+	// Llenar trabajos
 	for i := range updatedPlaces {
+		jobs <- i
+	}
+	close(jobs)
+
+	var wg sync.WaitGroup
+
+	// Worker pool: cada worker crea UNA pestaña y la reutiliza para muchos lugares
+	for w := 0; w < maxPhoneWorkers; w++ {
 		wg.Add(1)
-		go func(index int) {
+		go func(workerID int) {
 			defer wg.Done()
-			defer func() {
+
+			// Crear y reutilizar una página por worker para evitar overhead de crear/cierrar pestañas por lugar
+			page := scraper.browser.MustPage()
+			defer page.Close()
+
+			for idx := range jobs {
+				place := &updatedPlaces[idx]
+
+				start := time.Now()
+				// Solo procesar si no hay teléfono y existe GoogleURL
+				if place.Phone == "" && place.GoogleURL != "" {
+					// navegar y extraer usando la página reutilizable
+					// usar un contexto con timeout para evitar bloqueos largos
+					ctx, cancel := context.WithTimeout(context.Background(), phoneTimeout)
+					// Navegar
+					if err := page.Navigate(place.GoogleURL); err != nil {
+						log.Printf("[worker %d] Error navegando a %s: %v", workerID, place.GoogleURL, err)
+						cancel()
+					} else {
+						page.MustWaitStable()
+						// Pequeña espera para permitir que contenido dinámico aparezca
+						time.Sleep(750 * time.Millisecond)
+
+						phone, err := scraper.findPhoneWithTimeout(page, ctx)
+						if err == nil && phone != "" {
+							mu.Lock()
+							place.ScrapedPhone = phone
+							mu.Unlock()
+						} else if err != nil {
+							log.Printf("[worker %d] No phone for %s: %v", workerID, place.GoogleURL, err)
+						}
+						cancel()
+						// Rate limiting ligero entre requests
+						time.Sleep(300 * time.Millisecond)
+					}
+				}
+
+				elapsed := time.Since(start)
+				log.Printf("[worker %d] Procesado index=%d name=%q elapsed=%s", workerID, idx, place.Name, elapsed)
+
 				mu.Lock()
 				bar.Add(1)
 				mu.Unlock()
-			}()
-			
-			// Adquirir semáforo
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-
-			place := &updatedPlaces[index]
-			
-			// Solo procesar si no hay teléfono o si GoogleURL está disponible
-			if place.Phone == "" && place.GoogleURL != "" {
-				phone, err := scraper.ExtractPhoneFromGoogleMapsURL(place.GoogleURL)
-				if err == nil && phone != "" {
-					mu.Lock()
-					place.ScrapedPhone = phone
-					mu.Unlock()
-				}
-				
-				// Rate limiting
-				time.Sleep(1 * time.Second)
 			}
-		}(i)
+		}(w)
 	}
 
 	wg.Wait()
 	bar.Finish()
-	fmt.Println() // Nueva línea después de la barra
-	
+	fmt.Println()
+
 	return updatedPlaces
 }
 
@@ -364,6 +394,12 @@ func saveCSVWithPhones(places []PlaceWithPhone, filename string) error {
 		return err
 	}
 	defer file.Close()
+
+	// Write UTF-8 BOM so Excel recognizes accents correctly
+	if _, err := file.Write([]byte{0xEF, 0xBB, 0xBF}); err != nil {
+		file.Close()
+		return err
+	}
 
 	writer := csv.NewWriter(file)
 	defer writer.Flush()

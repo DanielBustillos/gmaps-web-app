@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  mapsscrap:
+    build: .
+    image: mapsscrap:latest
+    container_name: mapsscrap
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - MAPBOX_TOKEN=${MAPBOX_TOKEN}
+    volumes:
+      - ./data:/app
+    # If Chromium inside the container needs /dev/shm increased uncomment below:
+    # shm_size: '1gb'
+    # If you run into Chrome sandbox problems on some Linux hosts, add:
+    # security_opt:
+    #   - seccomp:unconfined
+    # You can also pass additional flags to the scraper binaries via env vars if needed.

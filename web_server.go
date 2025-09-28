@@ -14,10 +14,13 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"math"
 	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
+	"sync"
+	"sync/atomic"
 )
 
 type PipelineRequest struct {
@@ -47,7 +50,18 @@ type ProgressMessage struct {
 }
 
 var clients = make(map[*websocket.Conn]bool)
+var clientsMu sync.Mutex
 var broadcast = make(chan ProgressMessage)
+
+// currentPipelineCancel holds the cancel func for the currently running pipeline (if any).
+// It's protected by currentPipelineMu.
+var currentPipelineCancel context.CancelFunc
+var currentPipelineMu sync.Mutex
+var currentPipelineID int64
+
+// Edit this value to hardcode your Mapbox public token (pk.*). If empty,
+// the server will also check the MAPBOX_TOKEN environment variable.
+var embeddedMapboxToken = "pk.eyJ1IjoiZGFuaWVsLWl0ZHAiLCJhIjoiY2t1NDhwaTRqMm1yYTJ2cWg4MTdhb3Q5cSJ9.GQ_INvkN6do9wJ3XtRymHw"
 
 func init() {
 	// Manejar mensajes de broadcast
@@ -73,14 +87,30 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+	// Edit this value to hardcode your Mapbox public token (pk.*). If empty,
+	// the server will also check the MAPBOX_TOKEN environment variable.
 func main() {
+	// Allow configuring where web static files and output CSVs live via env
+	webDir := os.Getenv("WEB_DIR")
+	if webDir == "" {
+		webDir = "./web"
+	}
+	outputDir := os.Getenv("OUTPUT_DIR")
+	if outputDir == "" {
+		outputDir = "."
+	}
+
 	r := mux.NewRouter()
 
-	// Servir archivos estáticos
-	r.PathPrefix("/web/").Handler(http.StripPrefix("/web/", http.FileServer(http.Dir("./web/"))))
+	// Servir index.html procesado (inyectar MAPBOX_TOKEN) y archivos estáticos
+	// Use configured webDir
+	r.HandleFunc("/web/", func(w http.ResponseWriter, r *http.Request) { serveIndex(w, r, webDir) })
+	r.HandleFunc("/web/index.html", func(w http.ResponseWriter, r *http.Request) { serveIndex(w, r, webDir) })
+	r.PathPrefix("/web/").Handler(http.StripPrefix("/web/", http.FileServer(http.Dir(webDir))))
 	
 	// API endpoints
 	r.HandleFunc("/api/execute", handleExecutePipeline).Methods("POST")
+	r.HandleFunc("/api/cancel", handleCancelPipeline).Methods("POST")
 	r.HandleFunc("/api/download/{filename}", handleDownloadFile).Methods("GET")
 	r.HandleFunc("/api/files", handleListFiles).Methods("GET")
 	r.HandleFunc("/api/ws", handleWebSocket)
@@ -90,10 +120,48 @@ func main() {
 		http.Redirect(w, r, "/web/", http.StatusFound)
 	})
 
-	fmt.Println("🚀 Servidor web iniciado en http://localhost:8080")
-	fmt.Println("📊 Interfaz web disponible en http://localhost:8080/web/")
-	
-	log.Fatal(http.ListenAndServe(":8080", r))
+	// Use PORT from environment (Render and many PaaS set this). Default to 8080 for local runs.
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	fmt.Printf("🚀 Servidor web iniciado en http://0.0.0.0:%s\n", port)
+	fmt.Printf("📊 Interfaz web disponible en http://0.0.0.0:%s/web/\n", port)
+
+	addr := fmt.Sprintf(":%s", port)
+	log.Fatal(http.ListenAndServe(addr, r))
+}
+
+func serveIndex(w http.ResponseWriter, r *http.Request, webDir string) {
+	// Read the static index.html from configured webDir
+	content, err := os.ReadFile(filepath.Join(webDir, "index.html"))
+	if err != nil {
+		http.Error(w, "index not found", http.StatusInternalServerError)
+		return
+	}
+
+	token := os.Getenv("MAPBOX_TOKEN")
+	if token == "" {
+		token = embeddedMapboxToken
+	}
+	// Provide a short, safe preview in logs to help debugging without printing the full token
+	preview := token
+	if len(preview) > 8 {
+		preview = preview[:8] + "..."
+	}
+	log.Printf("serveIndex: request=%s token_present=%t preview=%s length=%d", r.URL.Path, token != "", preview, len(token))
+	html := string(content)
+	if token != "" {
+		// Inject token into placeholder MAPBOX_TOKEN_PLACEHOLDER
+		html = strings.ReplaceAll(html, "MAPBOX_TOKEN_PLACEHOLDER", token)
+	} else {
+		// Remove token input (optional) or leave placeholder empty
+		html = strings.ReplaceAll(html, "MAPBOX_TOKEN_PLACEHOLDER", "")
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(html))
 }
 
 func handleExecutePipeline(w http.ResponseWriter, r *http.Request) {
@@ -135,24 +203,32 @@ func handleExecutePipeline(w http.ResponseWriter, r *http.Request) {
 
 	// Ejecutar pipeline
 	response := executePipeline(req)
-	
-	// Al finalizar el pipeline, enviar respuesta minimalista sin estadísticas
-	responseMinimal := struct {
-		FileName string `json:"fileName"`
-	}{
-		FileName: response.FileName,
-	}
 
+	// Devolver la respuesta completa (success, message, fileName, stats)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(responseMinimal)
+	json.NewEncoder(w).Encode(response)
 }
 
 func executePipeline(req PipelineRequest) PipelineResponse {
 	log.Printf("🚀 Iniciando pipeline de scraping con parámetros: %+v", req)
+
+	// Notificar inicio a clientes WebSocket
+	go func() {
+		msg := ProgressMessage{Type: "log", Message: "🚀 Iniciando pipeline..."}
+		select {
+		case broadcast <- msg:
+		default:
+		}
+	}()
 	
-	// Convertir parámetros a strings
-	latStr := strconv.FormatFloat(req.Latitude, 'f', -1, 64)
-	lonStr := strconv.FormatFloat(req.Longitude, 'f', -1, 64)
+	// Limitar coordenadas a máximo 5 decimales y convertir parámetros a strings
+	const maxDecimals = 5
+	factor := math.Pow10(maxDecimals)
+	latRounded := math.Round(req.Latitude*factor) / factor
+	lonRounded := math.Round(req.Longitude*factor) / factor
+
+	latStr := strconv.FormatFloat(latRounded, 'f', -1, 64)
+	lonStr := strconv.FormatFloat(lonRounded, 'f', -1, 64)
 	radiusStr := strconv.FormatFloat(req.Radius, 'f', -1, 64)
 
 	log.Printf("📋 Preparando comando con: latitud=%s, longitud=%s, palabra=%s, radio=%s km", latStr, lonStr, req.Keyword, radiusStr)
@@ -173,7 +249,19 @@ func executePipeline(req PipelineRequest) PipelineResponse {
 	}
 	
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
+	// Register cancel function so websocket disconnect can stop the pipeline
+	pipelineID := atomic.AddInt64(&currentPipelineID, 1)
+	currentPipelineMu.Lock()
+	currentPipelineCancel = cancel
+	currentPipelineMu.Unlock()
+	defer func(id int64) {
+		currentPipelineMu.Lock()
+		if atomic.LoadInt64(&currentPipelineID) == id {
+			currentPipelineCancel = nil
+		}
+		currentPipelineMu.Unlock()
+	}(pipelineID)
+
 	cmd = exec.CommandContext(ctx, cmd.Args[0], cmd.Args[1:]...)
 
 	log.Printf("⏰ Timeout configurado: %.0f minutos", timeout.Minutes())
@@ -219,6 +307,16 @@ func executePipeline(req PipelineRequest) PipelineResponse {
 			line := scanner.Text()
 			log.Printf("📤 STDOUT: %s", line)
 
+			// Enviar línea cruda a clientes WebSocket
+			go func(l string) {
+				msg := ProgressMessage{Type: "log", Message: l}
+				// intentar enviar sin bloquear si no hay consumidores rápidos
+				select {
+				case broadcast <- msg:
+				default:
+				}
+			}(line)
+
 			// Agregar log detallado para errores
 			if err != nil {
 				log.Printf("❌ Error procesando línea: %v", err)
@@ -230,6 +328,20 @@ func executePipeline(req PipelineRequest) PipelineResponse {
 				current, _ := strconv.Atoi(matches[3])
 				total, _ := strconv.Atoi(matches[4])
 				log.Printf("� Progreso scraping: %d%% (%d/%d)", percentage, current, total)
+
+				// Enviar progreso estructurado a clientes WebSocket
+				progressMsg := ProgressMessage{
+					Type:       "progress",
+					Message:    fmt.Sprintf("Progreso scraping: %d%%", percentage),
+					Percentage: percentage,
+					Current:    current,
+					Total:      total,
+					Stage:      "scraping",
+				}
+				select {
+				case broadcast <- progressMsg:
+				default:
+				}
 			}
 			
 			// Detectar progreso de extracción de teléfonos
@@ -244,6 +356,20 @@ func executePipeline(req PipelineRequest) PipelineResponse {
 				bar := strings.Repeat("█", filled) + strings.Repeat("░", barLength-filled)
 				
 				log.Printf("📞 Extrayendo teléfonos... %d%% |%s| (%d/%d)", percentage, bar, current, total)
+
+				// Enviar progreso de teléfonos a clientes WebSocket
+				phoneMsg := ProgressMessage{
+					Type:       "progress",
+					Message:    fmt.Sprintf("Extrayendo teléfonos: %d/%d", current, total),
+					Percentage: percentage,
+					Current:    current,
+					Total:      total,
+					Stage:      "phones",
+				}
+				select {
+				case broadcast <- phoneMsg:
+				default:
+				}
 			}
 		}
 	}()
@@ -255,6 +381,15 @@ func executePipeline(req PipelineRequest) PipelineResponse {
 		for scanner.Scan() {
 			line := scanner.Text()
 			log.Printf("📤 STDERR: %s", line)
+
+			// Reenviar stderr a clientes WebSocket
+			go func(l string) {
+				msg := ProgressMessage{Type: "log", Message: l}
+				select {
+				case broadcast <- msg:
+				default:
+				}
+			}(line)
 			
 			// También verificar stderr para barras de progreso
 			if matches := progressRegex.FindStringSubmatch(line); len(matches) > 0 {
@@ -262,6 +397,18 @@ func executePipeline(req PipelineRequest) PipelineResponse {
 				current, _ := strconv.Atoi(matches[3])
 				total, _ := strconv.Atoi(matches[4])
 				log.Printf("📊 Progreso: %d%% (%d/%d)", percentage, current, total)
+
+				prog := ProgressMessage{
+					Type:       "progress",
+					Message:    fmt.Sprintf("Progreso: %d%%", percentage),
+					Percentage: percentage,
+					Current:    current,
+					Total:      total,
+				}
+				select {
+				case broadcast <- prog:
+				default:
+				}
 			}
 		}
 	}()
@@ -289,6 +436,25 @@ func executePipeline(req PipelineRequest) PipelineResponse {
 		case err := <-done:
 			elapsed := time.Since(startTime)
 			log.Printf("🏁 Comando terminado después de %.1f minutos", elapsed.Minutes())
+
+			// Notificar finalización (o error) al cliente
+			if err != nil {
+				go func(e error) {
+					msg := ProgressMessage{Type: "error", Message: fmt.Sprintf("❌ Error ejecutando pipeline: %v", e)}
+					select {
+					case broadcast <- msg:
+					default:
+					}
+				}(err)
+			} else {
+				go func() {
+					msg := ProgressMessage{Type: "complete", Message: "✅ Pipeline completado exitosamente!"}
+					select {
+					case broadcast <- msg:
+					default:
+					}
+				}()
+			}
 			
 			if err != nil {
 				log.Printf("❌ Error ejecutando pipeline: %v", err)
@@ -342,6 +508,10 @@ func executePipeline(req PipelineRequest) PipelineResponse {
 }
 
 func findLatestCSV(keyword string, radius float64) (string, string) {
+	outputDir := os.Getenv("OUTPUT_DIR")
+	if outputDir == "" {
+		outputDir = "."
+	}
 	// Crear patrones de búsqueda
 	sanitizedKeyword := strings.ReplaceAll(keyword, " ", "_")
 	
@@ -360,7 +530,8 @@ func findLatestCSV(keyword string, radius float64) (string, string) {
 	var latestTime time.Time
 	
 	for _, pattern := range patterns {
-		matches, err := filepath.Glob(pattern)
+		fullPattern := filepath.Join(outputDir, pattern)
+		matches, err := filepath.Glob(fullPattern)
 		if err != nil {
 			log.Printf("Error with pattern %s: %v", pattern, err)
 			continue
@@ -399,6 +570,7 @@ func findLatestCSV(keyword string, radius float64) (string, string) {
 }
 
 func countPlacesInCSV(filePath string, includePhone bool) (int, int) {
+	// filePath may be absolute; open directly
 	file, err := os.Open(filePath)
 	if err != nil {
 		return 0, 0
@@ -452,14 +624,19 @@ func handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	filePath := filepath.Join(".", filename)
+	outputDir := os.Getenv("OUTPUT_DIR")
+	if outputDir == "" {
+		outputDir = "."
+	}
+
+	filePath := filepath.Join(outputDir, filename)
 	log.Printf("Looking for file at path: %s", filePath)
-	
+    
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		log.Printf("File not found: %s", filePath)
 		
 		// Buscar archivos similares para debug
-		matches, _ := filepath.Glob("prospects_*.csv")
+	matches, _ := filepath.Glob(filepath.Join(outputDir, "prospects_*.csv"))
 		log.Printf("Available CSV files: %v", matches)
 		
 		http.Error(w, fmt.Sprintf("File not found: %s", filename), http.StatusNotFound)
@@ -494,8 +671,12 @@ func isValidFilename(filename string) bool {
 func handleListFiles(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	
-	matches, err := filepath.Glob("prospects_*.csv")
+	outputDir := os.Getenv("OUTPUT_DIR")
+	if outputDir == "" {
+		outputDir = "."
+	}
+
+	matches, err := filepath.Glob(filepath.Join(outputDir, "prospects_*.csv"))
 	if err != nil {
 		http.Error(w, "Error listing files", http.StatusInternalServerError)
 		return
@@ -523,24 +704,77 @@ func handleListFiles(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(files)
 }
 
+func handleCancelPipeline(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	currentPipelineMu.Lock()
+	defer currentPipelineMu.Unlock()
+
+	if currentPipelineCancel == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "No pipeline running",
+		})
+		return
+	}
+
+	// Cancelar el pipeline en ejecución
+	currentPipelineCancel()
+	currentPipelineCancel = nil
+
+	// Broadcast a clients
+	go func() {
+		msg := ProgressMessage{Type: "error", Message: "⚠️ Pipeline cancelado por el usuario"}
+		select {
+		case broadcast <- msg:
+		default:
+		}
+	}()
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Pipeline cancelado",
+	})
+}
+
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("Error upgrading to websocket: %v", err)
 		return
 	}
-	defer conn.Close()
-
 	// Registrar cliente
+	clientsMu.Lock()
 	clients[conn] = true
-	log.Printf("Cliente WebSocket conectado. Total: %d", len(clients))
+	totalClients := len(clients)
+	clientsMu.Unlock()
+	log.Printf("Cliente WebSocket conectado. Total: %d", totalClients)
 
 	// Mantener conexión activa
 	for {
 		_, _, err := conn.ReadMessage()
 		if err != nil {
 			log.Printf("Cliente WebSocket desconectado: %v", err)
+			// Cerrar y eliminar cliente
+			conn.Close()
+			clientsMu.Lock()
 			delete(clients, conn)
+			remaining := len(clients)
+			clientsMu.Unlock()
+
+			log.Printf("Clientes restantes: %d", remaining)
+
+			// Si ya no quedan clientes, cancelar el pipeline en ejecución
+			if remaining == 0 {
+				currentPipelineMu.Lock()
+				if currentPipelineCancel != nil {
+					log.Printf("No hay clientes WebSocket, cancelando pipeline en ejecución...")
+					currentPipelineCancel()
+					currentPipelineCancel = nil
+				}
+				currentPipelineMu.Unlock()
+			}
 			break
 		}
 	}

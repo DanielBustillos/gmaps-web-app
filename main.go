@@ -433,6 +433,12 @@ func savePlacesToCSV(places []Place, filename string) error {
 	}
 	defer file.Close()
 
+	// Write UTF-8 BOM so Excel and other tools recognize UTF-8 and accents correctly
+	if _, err := file.Write([]byte{0xEF, 0xBB, 0xBF}); err != nil {
+		file.Close()
+		return fmt.Errorf("failed to write BOM to CSV file: %w", err)
+	}
+
 	writer := csv.NewWriter(file)
 	defer writer.Flush()
 

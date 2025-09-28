@@ -5,6 +5,10 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Maps Scraper - Pipeline Web Interface</title>
         <script src="https://cdn.tailwindcss.com"></script>
+    <link href='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css' rel='stylesheet' />
+    <style>
+    #map { height: 320px; border-radius: 12px; }
+    </style>
         <style>
         .spinner {
             border: 3px solid #374151;
@@ -82,33 +86,15 @@
                     <div class="space-y-4">
                         <h3 class="text-lg font-medium text-gray-700">📍 Ubicación</h3>
                         <div class="grid grid-cols-2 gap-4">
-                            <div>
-                                <label for="latitude" class="block text-sm font-medium text-gray-600 mb-2">
-                                    Latitud
-                                </label>
-                                <input 
-                                    type="number" 
-                                    id="latitude" 
-                                    step="any"
-                                    value="19.1019061"
-                                    class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                                    placeholder="19.1019061"
-                                    required
-                                >
-                            </div>
-                            <div>
-                                <label for="longitude" class="block text-sm font-medium text-gray-600 mb-2">
-                                    Longitud
-                                </label>
-                                <input 
-                                    type="number" 
-                                    id="longitude" 
-                                    step="any"
-                                    value="-98.2810447"
-                                    class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                                    placeholder="-98.2810447"
-                                    required
-                                >
+                            <!-- Hidden inputs keep existing IDs so JS and form submission continue to work -->
+                            <input id="mapToken" type="hidden" value="MAPBOX_TOKEN_PLACEHOLDER" />
+                            <input id="latitude" name="latitude" type="hidden" value="19.02779876497669" />
+                            <input id="longitude" name="longitude" type="hidden" value="-98.23827252503806" />
+
+                            <!-- Mapbox picker shown by default with an overlay instruction -->
+                            <div class="col-span-2 mt-2">
+                                <div id="mapInstruction" class="mb-2 text-center text-gray-700 text-lg font-semibold">selecciona la zona de busqueda</div>
+                                <div id="map" class="mt-0 w-full rounded-xl overflow-hidden" style="height:320px;"></div>
                             </div>
                         </div>
                     </div>
@@ -148,30 +134,40 @@
                     </div>
 
                     <!-- Opción de teléfono -->
-                    <div class="bg-blue-50 rounded-xl p-4">
+                    <div class="bg-blue-50 rounded-xl p-4 relative group" id="includePhoneSection" aria-disabled="true">
                         <div class="flex items-center space-x-3">
                             <input 
                                 type="checkbox" 
                                 id="includePhone" 
-                                checked
-                                class="w-5 h-5 text-blue-600 border-2 border-gray-300 rounded focus:ring-blue-500"
+                                disabled
+                                class="w-5 h-5 text-blue-400 border-2 border-gray-200 rounded bg-gray-100 cursor-not-allowed"
+                                aria-disabled="true"
                             >
-                            <label for="includePhone" class="text-sm font-medium text-gray-700">
+                            <label for="includePhone" class="text-sm font-medium text-gray-400">
                                 📞 Incluir números de teléfono
                             </label>
+                            <span class="ml-3 inline-flex text-xs font-semibold text-white bg-gray-400 px-2 py-1 rounded-full">en desarrollo</span>
                         </div>
-                        <p class="text-xs text-gray-500 mt-2 ml-8">Este proceso puede tomar más tiempo pero proporciona información más completa</p>
+                        <p class="text-xs text-gray-500 mt-2 ml-8">Este proceso está en desarrollo y no está disponible todavía</p>
+                        <!-- Hover/focus hint: show additional note when hovering the section -->
+                        <div class="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+                            <div class="bg-black text-white text-sm px-3 py-1 rounded-md bg-opacity-70">en desarrollo</div>
+                        </div>
                     </div>
 
                     <!-- Botón de envío -->
+                    <div class="flex gap-3">
                     <button 
                         type="submit" 
                         id="submitBtn"
                         class="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold py-4 px-6 rounded-xl transition-all duration-200 flex items-center justify-center space-x-3 shadow-lg hover:shadow-xl"
                     >
-                        <span id="btnText">🚀 Ejecutar Pipeline</span>
+                        <span id="btnText">🚀 Ex</span>
                         <div id="spinner" class="spinner hidden"></div>
                     </button>
+
+                    <!-- cancelBtn will be injected below the terminal when pipeline starts -->
+                    </div>
                 </form>
             </div>
 
@@ -193,6 +189,7 @@
                         </div>
                     </div>
                 </div>
+                <div id="terminalControls" class="mt-4"></div>
 
                 <!-- Resultados -->
                 <div id="results" class="bg-white rounded-2xl shadow-xl p-8 hidden fade-in">
@@ -237,6 +234,28 @@
     </div>
 
         <script>
+            // Mapbox logic
+            async function loadMapboxAndInit(token, latInputId = 'latitude', lonInputId = 'longitude') {
+                if (!token) {
+                    console.warn('No Mapbox token provided. The map will not be available.');
+                    return null;
+                }
+                // Dynamically load mapbox script if needed
+                if (typeof mapboxgl === 'undefined') {
+                    const s = document.createElement('script');
+                    s.src = 'https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js';
+                    document.head.appendChild(s);
+                    await new Promise((res) => { s.onload = res; s.onerror = res; });
+                }
+
+                mapboxgl.accessToken = token;
+                return true;
+            }
+
+            function roundDecimals(v, dec=5) {
+                const factor = Math.pow(10, dec);
+                return Math.round(v * factor) / factor;
+            }
             class PipelineInterface {
                 constructor() {
                 this.form = document.getElementById('scraperForm');
@@ -249,6 +268,7 @@
                 this.downloadBtn = document.getElementById('downloadBtn');
                 this.downloadInfo = document.getElementById('downloadInfo');
                 this.newSearchBtn = document.getElementById('newSearchBtn');
+                // cancelBtn will be injected dynamically into #terminalControls
 
                 this.currentFileName = '';
                 this.isRunning = false;
@@ -261,6 +281,7 @@
                 this.form.addEventListener('submit', (e) => this.handleSubmit(e));
                 this.downloadBtn.addEventListener('click', () => this.downloadFile());
                 this.newSearchBtn.addEventListener('click', () => this.resetInterface());
+                this.initMapbox();
             }
 
             async handleSubmit(e) {
@@ -323,6 +344,9 @@
                     // Mostrar contador de progreso
                     this.startProgressCounter(formData);
                     
+                    // Abrir WebSocket para recibir progreso
+                    this.openWebSocket();
+
                     // Llamar al API del servidor
                     const response = await fetch('/api/execute', {
                         method: 'POST',
@@ -379,6 +403,208 @@
                     }
                 }
             }
+
+            openWebSocket() {
+                try {
+                    this.ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/ws');
+                    this.ws.onmessage = (evt) => {
+                        try {
+                            const msg = JSON.parse(evt.data);
+                            if (msg.type === 'log') this.logMessage(msg.message);
+                            else if (msg.type === 'progress') this.logMessage(`[${msg.stage}] ${msg.message}`);
+                            else if (msg.type === 'error') {
+                                this.logError(msg.message);
+                                // remove cancel button on error
+                                const controls = document.getElementById('terminalControls');
+                                if (controls) controls.innerHTML = '';
+                            }
+                            else if (msg.type === 'complete') {
+                                this.logMessage(msg.message);
+                                // pipeline finished: remove cancel button
+                                const controls = document.getElementById('terminalControls');
+                                if (controls) controls.innerHTML = '';
+                            }
+                        } catch (e) {
+                            // ignore
+                        }
+                    };
+                    this.ws.onopen = () => {
+                        this.logMessage('🔌 WebSocket conectado para progreso');
+                        const btn = document.getElementById('cancelBtn');
+                        if (btn) btn.disabled = false;
+                    };
+                    this.ws.onclose = () => {
+                        this.logMessage('🔌 WebSocket desconectado');
+                        const btn = document.getElementById('cancelBtn');
+                        if (btn) btn.disabled = true;
+                        // remove button on close
+                        const controls = document.getElementById('terminalControls');
+                        if (controls) controls.innerHTML = '';
+                    };
+                } catch (e) {
+                    console.warn('No se pudo abrir WebSocket', e);
+                }
+            }
+
+            async cancelPipeline() {
+                try {
+                    this.logMessage('✋ Solicitando cancelación del pipeline...');
+                    const resp = await fetch('/api/cancel', { method: 'POST' });
+                    const data = await resp.json();
+                    if (data && data.success) {
+                        this.logMessage('✋ Pipeline cancelado');
+                    } else {
+                        this.logError('No hay pipeline en ejecución');
+                    }
+                    // Cerrar socket localmente
+                    if (this.ws) {
+                        try { this.ws.close(); } catch (e) {}
+                    }
+                    const btn = document.getElementById('cancelBtn');
+                    if (btn) btn.disabled = true;
+                    const controls = document.getElementById('terminalControls');
+                    if (controls) controls.innerHTML = '';
+                    // Stop any progress counters and hide the terminal UI
+                    try { this.stopProgressCounter(); } catch (e) {}
+                    try { this.hideLoading(); } catch (e) {}
+                    try { this.isRunning = false; } catch (e) {}
+                    try { this.terminal.classList.add('hidden'); } catch (e) {}
+                    try { this.terminalContent.innerHTML = '<div class="text-gray-500">💡 Búsqueda cancelada. Ajusta parámetros y presiona "Extraer resultados" para intentar de nuevo</div>'; } catch (e) {}
+                } catch (e) {
+                    this.logError('Error al cancelar: ' + e.message);
+                }
+            }
+            async initMapbox() {
+                const token = document.getElementById('mapToken').value.trim();
+                const ok = await loadMapboxAndInit(token);
+                if (!ok) {
+                    // hide map overlay if token missing
+                    const overlay = document.getElementById('mapOverlay');
+                    if (overlay) overlay.textContent = 'map token missing';
+                    return;
+                }
+
+                const latInput = document.getElementById('latitude');
+                const lonInput = document.getElementById('longitude');
+                const instruction = document.getElementById('mapInstruction');
+
+                // init map with current coordinates
+                const initLat = parseFloat(latInput.value) || 19.02779;
+                const initLon = parseFloat(lonInput.value) || -98.23827;
+
+                const mapDiv = document.getElementById('map');
+
+                const map = new mapboxgl.Map({
+                    container: 'map',
+                    style: 'mapbox://styles/mapbox/streets-v11',
+                    center: [initLon, initLat],
+                    zoom: 13
+                });
+
+                const marker = new mapboxgl.Marker({ draggable: true })
+                    .setLngLat([initLon, initLat])
+                    .addTo(map);
+
+                function setInputsFromLngLat(lngLat) {
+                    const roundedLat = roundDecimals(lngLat.lat, 5);
+                    const roundedLon = roundDecimals(lngLat.lng, 5);
+                    latInput.value = roundedLat;
+                    lonInput.value = roundedLon;
+                    if (instruction) instruction.style.display = 'none';
+                    // Update coord badge if present
+                    const badge = document.getElementById('coordBadge');
+                    if (badge) badge.textContent = `${roundedLat}, ${roundedLon}`;
+                }
+
+                // Helper to ensure Turf is loaded (for circle creation)
+                async function ensureTurf() {
+                    if (typeof turf !== 'undefined') return true;
+                    return new Promise((resolve) => {
+                        const s = document.createElement('script');
+                        s.src = 'https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js';
+                        s.onload = () => resolve(true);
+                        s.onerror = () => resolve(false);
+                        document.head.appendChild(s);
+                    });
+                }
+
+                // Add a GeoJSON source and layer for the radius circle
+                map.on('load', async () => {
+                    // ensure turf available
+                    await ensureTurf();
+
+                    if (!map.getSource('searchRadius')) {
+                        map.addSource('searchRadius', { type: 'geojson', data: {
+                            type: 'FeatureCollection', features: []
+                        }});
+
+                        map.addLayer({
+                            id: 'searchRadiusFill',
+                            type: 'fill',
+                            source: 'searchRadius',
+                            layout: {},
+                            paint: {
+                                'fill-color': '#3b82f6',
+                                'fill-opacity': 0.12
+                            }
+                        });
+
+                        map.addLayer({
+                            id: 'searchRadiusOutline',
+                            type: 'line',
+                            source: 'searchRadius',
+                            layout: {},
+                            paint: {
+                                'line-color': '#2563eb',
+                                'line-width': 2
+                            }
+                        });
+                    }
+
+                    // initial draw
+                    updateRadiusCircle([initLon, initLat]);
+                });
+
+                function updateRadiusCircle(center) {
+                    // center: [lng, lat]
+                    const radiusKm = parseFloat(document.getElementById('radius').value) || 1.0;
+                    if (typeof turf === 'undefined' || !turf) return;
+                    try {
+                        const circle = turf.circle(center, radiusKm, { steps: 64, units: 'kilometers' });
+                        const src = map.getSource('searchRadius');
+                        if (src) {
+                            src.setData(circle);
+                        }
+                    } catch (e) {
+                        console.error('Error creating circle:', e);
+                    }
+                }
+
+                marker.on('dragend', () => {
+                    const lngLat = marker.getLngLat();
+                    setInputsFromLngLat(lngLat);
+                    updateRadiusCircle([lngLat.lng, lngLat.lat]);
+                });
+
+                map.on('click', (e) => {
+                    marker.setLngLat(e.lngLat);
+                    setInputsFromLngLat(e.lngLat);
+                    updateRadiusCircle([e.lngLat.lng, e.lngLat.lat]);
+                });
+
+                // update circle when radius input changes
+                const radiusInput = document.getElementById('radius');
+                if (radiusInput) {
+                    radiusInput.addEventListener('input', () => {
+                        const lng = parseFloat(latInput.value) || initLat;
+                        const lon = parseFloat(lonInput.value) || initLon;
+                        updateRadiusCircle([parseFloat(lon), parseFloat(lng)]);
+                    });
+                }
+
+                // Resize map after showing
+                setTimeout(() => { map.resize(); }, 300);
+            }
             
             showResults(formData, placesCount, phonesFound = 0) {
                 if (!phonesFound && formData.includePhone) {
@@ -387,29 +613,18 @@
                 const fileSize = (placesCount * 0.5).toFixed(1);
                 
                 this.downloadInfo.innerHTML = `
-                    <div class="space-y-3">
-                        <div class="flex justify-between items-center">
-                            <span class="font-medium text-gray-700">📊 Total de lugares:</span>
-                            <span class="text-gray-900 font-semibold">${placesCount}</span>
-                        </div>
-                        ${formData.includePhone ? `
-                            <div class="flex justify-between items-center">
-                                <span class="font-medium text-gray-700">📞 Teléfonos encontrados:</span>
-                                <span class="text-gray-900 font-semibold">${phonesFound} (${((phonesFound/placesCount)*100).toFixed(1)}%)</span>
-                            </div>
-                        ` : ''}
+                    <div class="space-y-2">
                         <div class="flex justify-between items-center">
                             <span class="font-medium text-gray-700">📁 Nombre del archivo:</span>
                             <span class="text-gray-900 font-semibold text-sm">${this.currentFileName}</span>
-                        </div>
-                        <div class="flex justify-between items-center">
-                            <span class="font-medium text-gray-700">💾 Tamaño estimado:</span>
-                            <span class="text-gray-900 font-semibold">${fileSize} KB</span>
                         </div>
                     </div>
                 `;
                 
                 this.results.classList.remove('hidden');
+                // pipeline finished: remove cancel button if present
+                const controls = document.getElementById('terminalControls');
+                if (controls) controls.innerHTML = '';
                 
                 // Auto-download después de mostrar resultados
                 setTimeout(() => {
@@ -478,8 +693,18 @@
                 this.stopProgressCounter();
                 this.results.classList.add('hidden');
                 this.terminal.classList.add('hidden');
-                this.terminalContent.innerHTML = '<div class="text-gray-500">💡 Configura los parámetros y presiona "Ejecutar Pipeline" para comenzar</div>';
+                this.terminalContent.innerHTML = '<div class="text-gray-500">💡 Configura los parámetros y presiona "Extraer resultados" para comenzar</div>';
                 this.currentFileName = '';
+                // remove cancel button from terminal controls
+                const controls = document.getElementById('terminalControls');
+                if (controls) controls.innerHTML = '';
+                // restore instruction and reset progress/badge
+                const instruction = document.getElementById('mapInstruction');
+                if (instruction) instruction.style.display = '';
+                const bar = document.getElementById('progressBar');
+                if (bar) bar.style.width = '0%';
+                const badge = document.getElementById('coordBadge');
+                if (badge && document.getElementById('latitude')) badge.textContent = `${document.getElementById('latitude').value}, ${document.getElementById('longitude').value}`;
             }
             
             showLoading() {
@@ -492,13 +717,32 @@
             hideLoading() {
                 this.submitBtn.disabled = false;
                 this.submitBtn.classList.remove('opacity-75', 'cursor-not-allowed');
-                this.btnText.textContent = '🚀 Ejecutar Pipeline';
+                this.btnText.textContent = '🚀 Extraer resultados';
                 this.spinner.classList.add('hidden');
             }
             
             showTerminal() {
                 this.terminal.classList.remove('hidden');
                 this.terminalContent.innerHTML = '';
+                // Inject cancel button below terminal if not present
+                try {
+                    const controls = document.getElementById('terminalControls');
+                    if (controls) {
+                        // Avoid creating multiple buttons
+                        if (!document.getElementById('cancelBtn')) {
+                            const btn = document.createElement('button');
+                            btn.id = 'cancelBtn';
+                            btn.type = 'button';
+                            btn.className = 'w-40 bg-red-600 hover:bg-red-700 text-white font-semibold py-3 px-4 rounded-xl transition-all duration-200 flex items-center justify-center space-x-3 shadow-lg hover:shadow-xl';
+                            btn.textContent = '✋ Cancelar';
+                            btn.addEventListener('click', () => this.cancelPipeline());
+                            controls.innerHTML = ''; // clear previous
+                            controls.appendChild(btn);
+                        }
+                    }
+                } catch (e) {
+                    console.error('Error injecting cancel button', e);
+                }
             }
             
             hideResults() {
@@ -579,8 +823,55 @@
         
         // Inicializar la aplicación
         // Esperar a 'load' para asegurar que Mapbox GL haya cargado
-        window.addEventListener('load', () => {
-            new PipelineInterface();
+
+            window.addEventListener('load', async () => {
+            const app = new PipelineInterface();
+
+            // Auto init map if token injected
+            const tokenVal = document.getElementById('mapToken')?.value || '';
+            if (tokenVal && tokenVal.trim() !== '') {
+                try { await app.initMapbox(); } catch (e) { console.warn('initMapbox failed', e); }
+            }
+
+            // Conectar WebSocket para recibir logs en tiempo real desde el servidor
+            try {
+                const scheme = (location.protocol === 'https:') ? 'wss' : 'ws';
+                const wsUrl = `${scheme}://${location.host}/api/ws`;
+                const socket = new WebSocket(wsUrl);
+
+                socket.addEventListener('open', () => {
+                    console.log('WebSocket conectado:', wsUrl);
+                });
+
+                socket.addEventListener('message', (ev) => {
+                    try {
+                        const data = JSON.parse(ev.data);
+                        if (!data) return;
+
+                        // Mapear tipos de mensaje a funciones de logging
+                        if (data.type === 'progress') {
+                            const text = data.message || `Progreso: ${data.percentage}%`;
+                            app.logMessage(text);
+                        } else if (data.type === 'log') {
+                            app.logMessage(data.message || '');
+                        } else if (data.type === 'error') {
+                            app.logError(data.message || 'Error');
+                        } else if (data.type === 'complete') {
+                            app.logMessage(data.message || 'Completado');
+                        } else {
+                            app.logMessage(JSON.stringify(data));
+                        }
+                    } catch (err) {
+                        console.error('Error parsing WS message', err, ev.data);
+                    }
+                });
+
+                socket.addEventListener('close', () => {
+                    app.logMessage('⚠️ WebSocket desconectado');
+                });
+            } catch (err) {
+                console.error('No se pudo conectar WebSocket:', err);
+            }
         });
     </script>
 </body>
